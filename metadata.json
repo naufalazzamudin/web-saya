@@ -1,0 +1,6 @@
+{
+  "name": "Hotel IT Inventory Management",
+  "description": "Modern full-stack IT department inventory management system for hotel hardware, refurbished equipment, and spare parts tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

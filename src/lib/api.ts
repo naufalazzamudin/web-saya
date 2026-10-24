@@ -8,9 +8,7 @@ import type {
   POFilterOptions,
   POStats,
   PrelovedItem,
-  PrelovedStats,
-  GoogleIntegrationSettings,
-  GoogleAccountInfo
+  PrelovedStats
 } from './types';
 
 const TOKEN_KEY = 'hotel_it_token';
@@ -416,94 +414,6 @@ export async function downloadPrelovedExcel(filters: FilterOptions = {}): Promis
   window.URL.revokeObjectURL(downloadUrl);
 }
 
-// ==========================================
-// Google Spreadsheet & Drive Integration API
-// ==========================================
-
-export async function fetchGoogleSettings(): Promise<GoogleIntegrationSettings> {
-  const res = await request<{ data: GoogleIntegrationSettings }>('/api/settings/google');
-  return res.data;
-}
-
-export async function saveGoogleSettings(payload: {
-  spreadsheetUrl: string;
-  driveFolderUrl: string;
-  autoSyncEnabled?: boolean;
-}): Promise<{ message: string; data: GoogleIntegrationSettings }> {
-  return request<{ message: string; data: GoogleIntegrationSettings }>('/api/settings/google', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function triggerServerAutoSync(options?: {
-  accessToken?: string;
-  reason?: string;
-}): Promise<{ success: boolean; data?: GoogleIntegrationSettings }> {
-  try {
-    return await request<{ success: boolean; data?: GoogleIntegrationSettings }>(
-      '/api/settings/google/trigger-auto-sync',
-      {
-        method: 'POST',
-        body: JSON.stringify(options || {})
-      }
-    );
-  } catch (err) {
-    console.warn('triggerServerAutoSync failed:', err);
-    return { success: false };
-  }
-}
-
-export async function saveGoogleAccountConnection(payload: {
-  account: GoogleAccountInfo;
-  accessToken: string;
-}): Promise<{ message: string; data: GoogleIntegrationSettings }> {
-  return request<{ message: string; data: GoogleIntegrationSettings }>('/api/settings/google/connect', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function disconnectGoogleAccountApi(): Promise<{ message: string; data: GoogleIntegrationSettings }> {
-  return request<{ message: string; data: GoogleIntegrationSettings }>('/api/settings/google/disconnect', {
-    method: 'POST'
-  });
-}
-
-export async function recordGoogleSyncStatus(payload: {
-  status: 'success' | 'failed' | 'in_progress';
-  message: string;
-  syncedInventoryCount?: number;
-  syncedPOCount?: number;
-  syncedPrelovedCount?: number;
-  syncedCount?: number;
-}): Promise<{ success: boolean }> {
-  return request<{ success: boolean }>('/api/settings/google/sync-status', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function syncUpdatedInventoryItemsToServer(items: InventoryItem[]): Promise<void> {
-  await request('/api/settings/google/sync-items', {
-    method: 'POST',
-    body: JSON.stringify({ items })
-  });
-}
-
-export async function syncUpdatedPOItemsToServer(items: PurchaseOrderItem[]): Promise<void> {
-  await request('/api/settings/google/sync-po-items', {
-    method: 'POST',
-    body: JSON.stringify({ items })
-  });
-}
-
-export async function syncUpdatedPrelovedItemsToServer(items: PrelovedItem[]): Promise<void> {
-  await request('/api/settings/google/sync-preloved-items', {
-    method: 'POST',
-    body: JSON.stringify({ items })
-  });
-}
 
 
 

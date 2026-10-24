@@ -344,7 +344,7 @@ export const AddEditInventoryModal: React.FC<AddEditInventoryModalProps> = ({
                   <span>{photoUrl ? 'Pilih Foto Pengganti' : 'Pilih File Gambar'}</span>
                 </button>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Foto barang wajib diisi. Gambar otomatis di-compress dan diunggah ke Google Drive saat sinkronisasi aktif.
+                  Foto barang wajib diisi. Gambar otomatis di-compress dan disimpan dengan kualitas optimal.
                 </p>
               </div>
             </div>

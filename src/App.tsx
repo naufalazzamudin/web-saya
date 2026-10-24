@@ -56,7 +56,6 @@ import {
   downloadPrelovedExcel,
   getStoredSecretToken
 } from './lib/api';
-import { triggerLiveAutoSync } from './lib/auto-sync-service';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -270,22 +269,13 @@ const AppContent: React.FC = () => {
     setIsAddEditInvOpen(true);
   };
 
-  const handleInventorySuccess = (item?: InventoryItem, isEdit?: boolean) => {
+  const handleInventorySuccess = (_item?: InventoryItem, _isEdit?: boolean) => {
     refreshDashboardData();
     loadInventoryItems();
-    if (item) {
-      triggerLiveAutoSync({
-        type: 'inventory',
-        action: isEdit ? 'edit' : 'add',
-        itemName: item.itemName,
-        onToast: addToast
-      });
-    }
   };
 
   const handleDeleteInventory = async () => {
     if (!invToDelete) return;
-    const deletedName = invToDelete.itemName;
     setIsDeleting(true);
     try {
       await deleteInventory(invToDelete.id);
@@ -293,12 +283,6 @@ const AppContent: React.FC = () => {
       setInvToDelete(null);
       refreshDashboardData();
       loadInventoryItems();
-      triggerLiveAutoSync({
-        type: 'inventory',
-        action: 'delete',
-        itemName: deletedName,
-        onToast: addToast
-      });
     } catch (err: any) {
       addToast(err.message || 'Failed to delete inventory item.', 'error');
     } finally {
@@ -317,22 +301,13 @@ const AppContent: React.FC = () => {
     setIsAddEditPOOpen(true);
   };
 
-  const handlePOSuccess = (po?: PurchaseOrderItem, isEdit?: boolean) => {
+  const handlePOSuccess = (_po?: PurchaseOrderItem, _isEdit?: boolean) => {
     refreshDashboardData();
     loadPOItems();
-    if (po) {
-      triggerLiveAutoSync({
-        type: 'po',
-        action: isEdit ? 'edit' : 'add',
-        itemName: po.itemName,
-        onToast: addToast
-      });
-    }
   };
 
   const handleDeletePO = async () => {
     if (!poToDelete) return;
-    const deletedName = poToDelete.itemName;
     setIsDeleting(true);
     try {
       await deletePurchaseOrder(poToDelete.id);
@@ -340,12 +315,6 @@ const AppContent: React.FC = () => {
       setPoToDelete(null);
       refreshDashboardData();
       loadPOItems();
-      triggerLiveAutoSync({
-        type: 'po',
-        action: 'delete',
-        itemName: deletedName,
-        onToast: addToast
-      });
     } catch (err: any) {
       addToast(err.message || 'Failed to delete Purchase Order.', 'error');
     } finally {
@@ -365,22 +334,13 @@ const AppContent: React.FC = () => {
     setIsAddEditPrelovedOpen(true);
   };
 
-  const handlePrelovedSuccess = (item?: PrelovedItem, isEdit?: boolean) => {
+  const handlePrelovedSuccess = (_item?: PrelovedItem, _isEdit?: boolean) => {
     refreshDashboardData();
     loadPrelovedItems();
-    if (item) {
-      triggerLiveAutoSync({
-        type: 'preloved',
-        action: isEdit ? 'edit' : 'add',
-        itemName: item.itemName,
-        onToast: addToast
-      });
-    }
   };
 
   const handleDeletePreloved = async () => {
     if (!prelovedToDelete) return;
-    const deletedName = prelovedToDelete.itemName;
     setIsDeleting(true);
     try {
       await deletePreloved(prelovedToDelete.id);
@@ -388,12 +348,6 @@ const AppContent: React.FC = () => {
       setPrelovedToDelete(null);
       refreshDashboardData();
       loadPrelovedItems();
-      triggerLiveAutoSync({
-        type: 'preloved',
-        action: 'delete',
-        itemName: deletedName,
-        onToast: addToast
-      });
     } catch (err: any) {
       addToast(err.message || 'Failed to delete Preloved item.', 'error');
     } finally {

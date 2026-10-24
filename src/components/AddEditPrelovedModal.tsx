@@ -337,7 +337,7 @@ export const AddEditPrelovedModal: React.FC<AddEditPrelovedModalProps> = ({
                   <span>{photoUrl ? 'Pilih Foto Pengganti' : 'Pilih File Gambar'}</span>
                 </button>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Foto akan otomatis di-compress dan diunggah ke Google Drive saat sinkronisasi Google aktif.
+                  Foto barang otomatis di-compress dan disimpan dengan aman di server.
                 </p>
               </div>
             </div>

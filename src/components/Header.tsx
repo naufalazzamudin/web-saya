@@ -6,73 +6,10 @@ import { RealTimeClock } from './RealTimeClock';
 interface HeaderProps {
   onToggleSidebar: () => void;
   onLogout: () => void;
-  sheetStatus?: {
-    isEnabled: boolean;
-    title?: string;
-    syncStatus?: 'synced' | 'syncing' | 'pending' | 'failed';
-    lastSyncTime?: string | null;
-  };
-  onOpenSettings?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onLogout, sheetStatus, onOpenSettings }) => {
+export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onLogout }) => {
   const { user } = useAuth();
-
-  const getStatusBadge = () => {
-    if (!sheetStatus?.isEnabled) return null;
-
-    const st = sheetStatus.syncStatus || 'synced';
-    if (st === 'syncing') {
-      return (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-[10px] font-bold transition-colors cursor-pointer"
-          title="Sedang menyinkronkan data dengan Google Spreadsheet..."
-        >
-          <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></span>
-          <span>Syncing Realtime...</span>
-        </button>
-      );
-    }
-    if (st === 'failed') {
-      return (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[10px] font-bold transition-colors cursor-pointer"
-          title="Sinkronisasi Google Spreadsheet gagal. Klik untuk memeriksa pengaturan."
-        >
-          <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-          <span>Sync Error</span>
-        </button>
-      );
-    }
-    if (st === 'pending') {
-      return (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 text-[10px] font-bold transition-colors cursor-pointer"
-          title="Sinkronisasi pending. Klik untuk memeriksa."
-        >
-          <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-          <span>DATABASE WEB IT (Pending)</span>
-        </button>
-      );
-    }
-    return (
-      <button
-        type="button"
-        onClick={onOpenSettings}
-        className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[10px] font-bold transition-colors cursor-pointer"
-        title={`Terhubung ke Google Spreadsheet: ${sheetStatus.title || 'DATABASE WEB IT'}`}
-      >
-        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span>DATABASE WEB IT (Live)</span>
-      </button>
-    );
-  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 py-3 transition-all">
@@ -97,7 +34,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onLogout, sheet
                 <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight leading-none">
                   HOTEL IT INVENTORY
                 </h1>
-                {getStatusBadge()}
               </div>
               <p className="text-[10px] sm:text-xs font-medium text-slate-500 hidden sm:block">
                 IT Department Inventory Management System

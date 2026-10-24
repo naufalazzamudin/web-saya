@@ -9,7 +9,6 @@ import type { InventoryItem, PurchaseOrderItem, PrelovedItem, UserAccount, Activ
 import { isDateRepairedInMonth, parseMonthFilter, filterInventory, sortInventory, computeStats, MONTH_NAMES, formatDate, formatDateTime } from './src/lib/inventory-logic';
 import { filterPurchaseOrders, sortPurchaseOrders, computePOStats } from './src/lib/po-logic';
 import { filterPreloved, sortPreloved, computePrelovedStats } from './src/lib/preloved-logic';
-import { extractGoogleSpreadsheetId, extractGoogleDriveFolderId, buildSpreadsheetValues, buildPOSpreadsheetValues, buildPrelovedSpreadsheetValues } from './src/lib/google-logic';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -29,35 +28,12 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 const activeSessions = new Map<string, { user: UserAccount; expiresAt: number }>();
 const secretTokens = new Set<string>();
 
-export interface GoogleIntegrationData {
-  spreadsheetUrl: string;
-  spreadsheetId: string;
-  driveFolderUrl: string;
-  driveFolderId: string;
-  connectedAccount: {
-    email: string;
-    name: string;
-    photoUrl?: string;
-    connectedAt: string;
-    connectedBy: string;
-  } | null;
-  cachedAccessToken?: string | null;
-  lastSyncedAt?: string | null;
-  lastSyncStatus?: 'idle' | 'success' | 'failed' | 'in_progress' | null;
-  lastSyncMessage?: string | null;
-  syncedInventoryCount?: number;
-  syncedPOCount?: number;
-  syncedPrelovedCount?: number;
-  autoSyncEnabled?: boolean;
-}
-
 interface DBData {
   users: Array<UserAccount & { passwordHash: string }>;
   inventory: InventoryItem[];
   purchaseOrders: PurchaseOrderItem[];
   preloved: PrelovedItem[];
   activities: ActivityRecord[];
-  googleIntegration?: GoogleIntegrationData;
 }
 
 // Helper to create sample SVG placeholder images
@@ -85,33 +61,6 @@ function initDB(): DBData {
         }
         if (!parsed.preloved) {
           parsed.preloved = [];
-        }
-        if (!parsed.googleIntegration) {
-          parsed.googleIntegration = {
-            spreadsheetUrl: '',
-            spreadsheetId: '',
-            driveFolderUrl: '',
-            driveFolderId: '',
-            connectedAccount: null,
-            cachedAccessToken: null,
-            lastSyncedAt: null,
-            lastSyncStatus: 'idle',
-            lastSyncMessage: null,
-            syncedInventoryCount: 0,
-            syncedPOCount: 0,
-            syncedPrelovedCount: 0,
-            autoSyncEnabled: true
-          };
-        } else {
-          if (parsed.googleIntegration.autoSyncEnabled === undefined) {
-            parsed.googleIntegration.autoSyncEnabled = true;
-          }
-          if (parsed.googleIntegration.syncedPOCount === undefined) {
-            parsed.googleIntegration.syncedPOCount = 0;
-          }
-          if (parsed.googleIntegration.syncedPrelovedCount === undefined) {
-            parsed.googleIntegration.syncedPrelovedCount = 0;
-          }
         }
         for (const item of parsed.inventory || []) {
           if (item.quantity === undefined) item.quantity = 1;
@@ -375,22 +324,7 @@ function initDB(): DBData {
     inventory: sampleInventory,
     purchaseOrders: samplePurchaseOrders,
     preloved: samplePreloved,
-    activities: initialActivities,
-    googleIntegration: {
-      spreadsheetUrl: '',
-      spreadsheetId: '',
-      driveFolderUrl: '',
-      driveFolderId: '',
-      connectedAccount: null,
-      cachedAccessToken: null,
-      lastSyncedAt: null,
-      lastSyncStatus: 'idle',
-      lastSyncMessage: null,
-      syncedInventoryCount: 0,
-      syncedPOCount: 0,
-      syncedPrelovedCount: 0,
-      autoSyncEnabled: true
-    }
+    activities: initialActivities
   };
 
   const tempPath = `${DB_FILE}.tmp`;
@@ -512,34 +446,6 @@ if (!dbCache.preloved || dbCache.preloved.length === 0) {
   saveDB(dbCache);
 }
 
-if (!dbCache.googleIntegration) {
-  dbCache.googleIntegration = {
-    spreadsheetUrl: '',
-    spreadsheetId: '',
-    driveFolderUrl: '',
-    driveFolderId: '',
-    connectedAccount: null,
-    cachedAccessToken: null,
-    lastSyncedAt: null,
-    lastSyncStatus: 'idle',
-    lastSyncMessage: null,
-    syncedInventoryCount: 0,
-    syncedPOCount: 0,
-    syncedPrelovedCount: 0,
-    autoSyncEnabled: true
-  };
-  saveDB(dbCache);
-} else {
-  if (dbCache.googleIntegration.autoSyncEnabled === undefined) {
-    dbCache.googleIntegration.autoSyncEnabled = true;
-  }
-  if (dbCache.googleIntegration.syncedPOCount === undefined) {
-    dbCache.googleIntegration.syncedPOCount = 0;
-  }
-  if (dbCache.googleIntegration.syncedPrelovedCount === undefined) {
-    dbCache.googleIntegration.syncedPrelovedCount = 0;
-  }
-}
 
 function saveDB(data: DBData) {
   dbCache = data;
@@ -548,221 +454,6 @@ function saveDB(data: DBData) {
   fs.renameSync(tempPath, DB_FILE);
 }
 
-// Background Auto-Sync functions for Google Drive & Spreadsheet
-async function uploadServerPhotoToDrive(
-  accessToken: string,
-  folderId: string,
-  fileName: string,
-  photoUrl: string
-): Promise<string | null> {
-  let buffer: Buffer | null = null;
-  let mimeType = 'image/jpeg';
-
-  if (photoUrl.startsWith('data:')) {
-    const match = photoUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      mimeType = match[1];
-      buffer = Buffer.from(match[2], 'base64');
-    }
-  } else if (photoUrl.startsWith('/uploads/')) {
-    const filename = photoUrl.replace(/^\/uploads\//, '');
-    const localPath = path.join(UPLOADS_DIR, filename);
-    if (fs.existsSync(localPath)) {
-      buffer = fs.readFileSync(localPath);
-      mimeType = localPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-    }
-  }
-
-  if (!buffer) return null;
-
-  const ext = mimeType.includes('png') ? 'png' : mimeType.includes('svg') ? 'svg' : 'jpg';
-  const cleanName = `${fileName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.${ext}`;
-  const metadata = { name: cleanName, parents: [folderId], mimeType };
-  const boundary = '-------314159265358979323846';
-  const delimiter = `\r\n--${boundary}\r\n`;
-  const closeDelimiter = `\r\n--${boundary}--`;
-
-  const metaPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}`;
-  const mediaHeader = `${delimiter}Content-Type: ${mimeType}\r\n\r\n`;
-
-  const metaBuffer = Buffer.from(metaPart);
-  const mediaHeaderBuffer = Buffer.from(mediaHeader);
-  const closeBuffer = Buffer.from(closeDelimiter);
-
-  const fullBody = Buffer.concat([metaBuffer, mediaHeaderBuffer, buffer, closeBuffer]);
-
-  try {
-    const uploadRes = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`
-        },
-        body: fullBody
-      }
-    );
-
-    if (!uploadRes.ok) return null;
-    const data = await uploadRes.json();
-    const fileId = data.id;
-
-    // Set permission to anyone with link can view
-    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'reader', type: 'anyone' })
-    }).catch(() => {});
-
-    return data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
-  } catch (e) {
-    console.warn('uploadServerPhotoToDrive error:', e);
-    return null;
-  }
-}
-
-async function triggerAutoSync(reason?: string) {
-  const g = dbCache.googleIntegration;
-  if (!g || !g.spreadsheetId || !g.driveFolderId || !g.cachedAccessToken || g.autoSyncEnabled === false) {
-    return;
-  }
-
-  try {
-    const accessToken = g.cachedAccessToken;
-    const spreadsheetId = g.spreadsheetId;
-    const driveFolderId = g.driveFolderId;
-
-    let hasPhotoChanges = false;
-
-    // 1. Upload non-drive photos for inventory
-    for (const inv of dbCache.inventory) {
-      if (inv.photoUrl && !inv.photoUrl.includes('drive.google.com') && !inv.photoUrl.includes('googleusercontent.com')) {
-        const driveUrl = await uploadServerPhotoToDrive(accessToken, driveFolderId, `${inv.category}_${inv.itemName}`, inv.photoUrl);
-        if (driveUrl) {
-          inv.photoUrl = driveUrl;
-          hasPhotoChanges = true;
-        }
-      }
-    }
-
-    // 2. Upload non-drive photos for purchase orders
-    for (const po of dbCache.purchaseOrders) {
-      if (po.photoUrl && !po.photoUrl.includes('drive.google.com') && !po.photoUrl.includes('googleusercontent.com')) {
-        const driveUrl = await uploadServerPhotoToDrive(accessToken, driveFolderId, `PO_${po.itemName}`, po.photoUrl);
-        if (driveUrl) {
-          po.photoUrl = driveUrl;
-          hasPhotoChanges = true;
-        }
-      }
-    }
-
-    // 3. Upload non-drive photos for preloved items
-    if (dbCache.preloved) {
-      for (const prev of dbCache.preloved) {
-        if (prev.photoUrl && !prev.photoUrl.includes('drive.google.com') && !prev.photoUrl.includes('googleusercontent.com')) {
-          const driveUrl = await uploadServerPhotoToDrive(accessToken, driveFolderId, `PRELOVED_${prev.category}_${prev.itemName}`, prev.photoUrl);
-          if (driveUrl) {
-            prev.photoUrl = driveUrl;
-            hasPhotoChanges = true;
-          }
-        }
-      }
-    }
-
-    if (hasPhotoChanges) {
-      saveDB(dbCache);
-    }
-
-    // 4. Ensure all three tabs exist in Spreadsheet
-    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=false`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-
-    if (metaRes.ok) {
-      const meta = await metaRes.json();
-      const sheetTitles: string[] = (meta.sheets || []).map((s: any) => s.properties?.title);
-
-      const requests: any[] = [];
-      if (!sheetTitles.includes('INVENTORY DATABASE')) {
-        requests.push({
-          addSheet: { properties: { title: 'INVENTORY DATABASE', gridProperties: { rowCount: 1000, columnCount: 15 } } }
-        });
-      }
-      if (!sheetTitles.includes('PURCHASE ORDER DATABASE')) {
-        requests.push({
-          addSheet: { properties: { title: 'PURCHASE ORDER DATABASE', gridProperties: { rowCount: 1000, columnCount: 15 } } }
-        });
-      }
-      if (!sheetTitles.includes('PRELOVED DATABASE')) {
-        requests.push({
-          addSheet: { properties: { title: 'PRELOVED DATABASE', gridProperties: { rowCount: 1000, columnCount: 15 } } }
-        });
-      }
-
-      if (requests.length > 0) {
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requests })
-        }).catch(() => {});
-      }
-    }
-
-    // 5. Clear old values and write updated Inventory tab
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'INVENTORY%20DATABASE'!A1:Z${dbCache.inventory.length + 100}:clear`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` }
-    }).catch(() => {});
-
-    const invValues = buildSpreadsheetValues(dbCache.inventory);
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'INVENTORY%20DATABASE'!A1?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: invValues })
-    }).catch(e => console.warn('Auto-sync inventory write warning:', e));
-
-    // 6. Clear old values and write updated Purchase Order tab
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PURCHASE%20ORDER%20DATABASE'!A1:Z${(dbCache.purchaseOrders || []).length + 100}:clear`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` }
-    }).catch(() => {});
-
-    const poValues = buildPOSpreadsheetValues(dbCache.purchaseOrders);
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PURCHASE%20ORDER%20DATABASE'!A1?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: poValues })
-    }).catch(e => console.warn('Auto-sync PO write warning:', e));
-
-    // 7. Clear old values and write updated Preloved tab
-    const prelovedList = dbCache.preloved || [];
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PRELOVED%20DATABASE'!A1:Z${prelovedList.length + 100}:clear`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` }
-    }).catch(() => {});
-
-    const prelovedValues = buildPrelovedSpreadsheetValues(prelovedList);
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PRELOVED%20DATABASE'!A1?valueInputOption=USER_ENTERED`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: prelovedValues })
-    }).catch(e => console.warn('Auto-sync Preloved write warning:', e));
-
-    // 8. Record sync status
-    if (dbCache.googleIntegration) {
-      dbCache.googleIntegration.lastSyncedAt = new Date().toISOString();
-      dbCache.googleIntegration.lastSyncStatus = 'success';
-      dbCache.googleIntegration.lastSyncMessage = `Otomatis tersinkron (${reason || 'data baru'}): ${dbCache.inventory.length} inventaris, ${(dbCache.purchaseOrders || []).length} PO & ${prelovedList.length} preloved ke Google Spreadsheet.`;
-      dbCache.googleIntegration.syncedInventoryCount = dbCache.inventory.length;
-      dbCache.googleIntegration.syncedPOCount = (dbCache.purchaseOrders || []).length;
-      dbCache.googleIntegration.syncedPrelovedCount = prelovedList.length;
-      saveDB(dbCache);
-    }
-  } catch (err: any) {
-    console.warn('triggerAutoSync error:', err);
-  }
-}
 
 // Express Middleware
 
@@ -1149,7 +840,6 @@ app.post('/api/inventory', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Tambah inventaris: ${newItem.itemName}`).catch(() => {});
 
   res.status(201).json({
     message: 'Inventory added successfully.',
@@ -1213,7 +903,6 @@ app.put('/api/inventory/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Update inventaris: ${updatedItem.itemName}`).catch(() => {});
 
   res.json({
     message: 'Inventory updated successfully.',
@@ -1246,7 +935,6 @@ app.delete('/api/inventory/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Hapus inventaris: ${item.itemName}`).catch(() => {});
 
   res.json({ message: 'Inventory item deleted successfully.' });
 });
@@ -1415,7 +1103,6 @@ app.post('/api/po', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Tambah Purchase Order: ${newPO.itemName}`).catch(() => {});
 
   res.status(201).json({
     message: 'Purchase Order added successfully.',
@@ -1482,7 +1169,6 @@ app.put('/api/po/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Update Purchase Order: ${updatedPO.itemName}`).catch(() => {});
 
   res.json({
     message: 'Purchase Order updated successfully.',
@@ -1516,7 +1202,6 @@ app.delete('/api/po/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Hapus Purchase Order: ${item.itemName}`).catch(() => {});
 
   res.json({ message: 'Purchase Order deleted successfully.' });
 });
@@ -2068,7 +1753,6 @@ app.post('/api/preloved', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Tambah Preloved: ${newPrev.itemName}`).catch(() => {});
 
   res.status(201).json({
     message: 'Preloved item created successfully.',
@@ -2119,7 +1803,6 @@ app.put('/api/preloved/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Update Preloved: ${updatedItem.itemName}`).catch(() => {});
 
   res.json({
     message: 'Preloved item updated successfully.',
@@ -2153,7 +1836,6 @@ app.delete('/api/preloved/:id', requireAuth, (req: Request, res: Response) => {
   dbCache.activities.unshift(activity);
 
   saveDB(dbCache);
-  triggerAutoSync(`Hapus Preloved: ${item.itemName}`).catch(() => {});
 
   res.json({ message: 'Preloved item deleted successfully.' });
 });
@@ -2366,214 +2048,25 @@ app.get('/api/export/excel-preloved', requireAuth, async (req: Request, res: Res
 });
 
 // ==========================================
-// GOOGLE SPREADSHEET & DRIVE INTEGRATION ROUTES
+// SYSTEM & DEVOPS HEALTH CHECK ENDPOINTS
 // ==========================================
 
-// 25. Get Google Integration Settings (Available for all authenticated users to read)
-app.get('/api/settings/google', requireAuth, (req: Request, res: Response) => {
-  res.json({ data: dbCache.googleIntegration });
-});
-
-// 26. Save Google Integration Settings (ONLY IT MANAGER)
-app.post('/api/settings/google', requireAuth, (req: Request, res: Response) => {
-  const user = (req as any).user as UserAccount;
-  if (user.role !== 'IT MANAGER') {
-    res.status(403).json({
-      error: 'Akses Ditolak: Hanya IT MANAGER yang berhak mengisi dan menyimpan URL Google Spreadsheet dan Google Drive.'
-    });
-    return;
-  }
-
-  const { spreadsheetUrl = '', driveFolderUrl = '', autoSyncEnabled } = req.body;
-  const spreadsheetId = extractGoogleSpreadsheetId(spreadsheetUrl) || '';
-  const driveFolderId = extractGoogleDriveFolderId(driveFolderUrl) || '';
-
-  dbCache.googleIntegration = {
-    ...dbCache.googleIntegration!,
-    spreadsheetUrl: (spreadsheetUrl || '').trim(),
-    spreadsheetId,
-    driveFolderUrl: (driveFolderUrl || '').trim(),
-    driveFolderId,
-    autoSyncEnabled: typeof autoSyncEnabled === 'boolean' ? autoSyncEnabled : (dbCache.googleIntegration?.autoSyncEnabled ?? true)
-  };
-
-  saveDB(dbCache);
-
+// Health check endpoint for uptime monitoring, Docker, Render, Railway, Kubernetes, VPS
+app.get('/api/health', (req: Request, res: Response) => {
   res.json({
-    message: 'Pengaturan Google Spreadsheet & Drive berhasil disimpan oleh IT MANAGER.',
-    data: dbCache.googleIntegration
-  });
-});
-
-// 27. Connect Google Account (ONLY IT MANAGER)
-app.post('/api/settings/google/connect', requireAuth, (req: Request, res: Response) => {
-  const user = (req as any).user as UserAccount;
-  if (user.role !== 'IT MANAGER') {
-    res.status(403).json({
-      error: 'Akses Ditolak: Hanya IT MANAGER yang berhak menghubungkan akun Google.'
-    });
-    return;
-  }
-
-  const { account, accessToken } = req.body;
-  if (!account || !account.email) {
-    res.status(400).json({ error: 'Informasi akun Google tidak valid.' });
-    return;
-  }
-
-  dbCache.googleIntegration = {
-    ...dbCache.googleIntegration!,
-    connectedAccount: {
-      email: account.email,
-      name: account.name || account.email,
-      photoUrl: account.photoUrl || '',
-      connectedAt: new Date().toISOString(),
-      connectedBy: user.username
-    },
-    cachedAccessToken: accessToken || dbCache.googleIntegration?.cachedAccessToken || null
-  };
-
-  dbCache.activities.unshift({
-    id: `act-${Date.now()}`,
-    itemName: `Google Drive & Sheets (${account.email})`,
-    category: 'PC ITEMS',
-    action: 'Edited',
-    username: user.username,
-    timestamp: new Date().toISOString()
-  });
-
-  saveDB(dbCache);
-
-  res.json({
-    message: 'Akun Google berhasil dihubungkan oleh IT MANAGER.',
-    data: dbCache.googleIntegration
-  });
-});
-
-// 28. Disconnect Google Account (ONLY IT MANAGER)
-app.post('/api/settings/google/disconnect', requireAuth, (req: Request, res: Response) => {
-  const user = (req as any).user as UserAccount;
-  if (user.role !== 'IT MANAGER') {
-    res.status(403).json({
-      error: 'Akses Ditolak: Hanya IT MANAGER yang berhak memutuskan koneksi akun Google.'
-    });
-    return;
-  }
-
-  dbCache.googleIntegration = {
-    ...dbCache.googleIntegration!,
-    connectedAccount: null,
-    cachedAccessToken: null
-  };
-
-  dbCache.activities.unshift({
-    id: `act-${Date.now()}`,
-    itemName: 'Google Drive & Sheets Disconnected',
-    category: 'PC ITEMS',
-    action: 'Edited',
-    username: user.username,
-    timestamp: new Date().toISOString()
-  });
-
-  saveDB(dbCache);
-
-  res.json({
-    message: 'Koneksi akun Google telah berhasil diputuskan.',
-    data: dbCache.googleIntegration
-  });
-});
-
-// 29. Update Sync Status
-app.post('/api/settings/google/sync-status', requireAuth, (req: Request, res: Response) => {
-  const { status, message, syncedInventoryCount, syncedPOCount, syncedPrelovedCount, syncedCount } = req.body;
-
-  dbCache.googleIntegration = {
-    ...dbCache.googleIntegration!,
-    lastSyncedAt: new Date().toISOString(),
-    lastSyncStatus: status,
-    lastSyncMessage: message,
-    syncedInventoryCount: typeof syncedInventoryCount === 'number' ? syncedInventoryCount : (typeof syncedCount === 'number' ? syncedCount : dbCache.inventory.length),
-    syncedPOCount: typeof syncedPOCount === 'number' ? syncedPOCount : (dbCache.purchaseOrders || []).length,
-    syncedPrelovedCount: typeof syncedPrelovedCount === 'number' ? syncedPrelovedCount : (dbCache.preloved || []).length
-  };
-
-  saveDB(dbCache);
-  res.json({ success: true, data: dbCache.googleIntegration });
-});
-
-// 30. Sync inventory items with Google Drive photo URLs back to DB
-app.post('/api/settings/google/sync-items', requireAuth, (req: Request, res: Response) => {
-  const { items } = req.body;
-  if (Array.isArray(items)) {
-    let updatedCount = 0;
-    for (const updatedItem of items) {
-      const idx = dbCache.inventory.findIndex(i => i.id === updatedItem.id);
-      if (idx !== -1 && updatedItem.photoUrl && updatedItem.photoUrl !== dbCache.inventory[idx].photoUrl) {
-        dbCache.inventory[idx].photoUrl = updatedItem.photoUrl;
-        updatedCount++;
-      }
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    nodeVersion: process.version,
+    environment: process.env.NODE_ENV || 'development',
+    port: PORT,
+    stats: {
+      users: dbCache.users.length,
+      inventory: dbCache.inventory.length,
+      purchaseOrders: (dbCache.purchaseOrders || []).length,
+      preloved: (dbCache.preloved || []).length,
+      activities: (dbCache.activities || []).length
     }
-    if (updatedCount > 0) {
-      saveDB(dbCache);
-    }
-  }
-  res.json({ success: true, total: dbCache.inventory.length });
-});
-
-// 31. Sync Purchase Order items with Google Drive photo URLs back to DB
-app.post('/api/settings/google/sync-po-items', requireAuth, (req: Request, res: Response) => {
-  const { items } = req.body;
-  if (Array.isArray(items) && dbCache.purchaseOrders) {
-    let updatedCount = 0;
-    for (const updatedPO of items) {
-      const idx = dbCache.purchaseOrders.findIndex(p => p.id === updatedPO.id);
-      if (idx !== -1 && updatedPO.photoUrl && updatedPO.photoUrl !== dbCache.purchaseOrders[idx].photoUrl) {
-        dbCache.purchaseOrders[idx].photoUrl = updatedPO.photoUrl;
-        updatedCount++;
-      }
-    }
-    if (updatedCount > 0) {
-      saveDB(dbCache);
-    }
-  }
-  res.json({ success: true, total: (dbCache.purchaseOrders || []).length });
-});
-
-// 32. Sync Preloved items with Google Drive photo URLs back to DB
-app.post('/api/settings/google/sync-preloved-items', requireAuth, (req: Request, res: Response) => {
-  const { items } = req.body;
-  if (Array.isArray(items) && dbCache.preloved) {
-    let updatedCount = 0;
-    for (const updatedItem of items) {
-      const idx = dbCache.preloved.findIndex(p => p.id === updatedItem.id);
-      if (idx !== -1 && updatedItem.photoUrl && updatedItem.photoUrl !== dbCache.preloved[idx].photoUrl) {
-        dbCache.preloved[idx].photoUrl = updatedItem.photoUrl;
-        updatedCount++;
-      }
-    }
-    if (updatedCount > 0) {
-      saveDB(dbCache);
-    }
-  }
-  res.json({ success: true, total: (dbCache.preloved || []).length });
-});
-
-// 32. Trigger Auto-Sync on Demand or After Data Change
-app.post('/api/settings/google/trigger-auto-sync', requireAuth, (req: Request, res: Response) => {
-  const { accessToken, reason } = req.body;
-  if (accessToken && typeof accessToken === 'string' && dbCache.googleIntegration) {
-    dbCache.googleIntegration.cachedAccessToken = accessToken;
-  }
-
-  // Trigger sync asynchronously in background
-  triggerAutoSync(reason || 'Data baru dimasukkan').catch(err => {
-    console.warn('triggerAutoSync endpoint error:', err);
-  });
-
-  res.json({
-    success: true,
-    message: 'Auto-sync process initiated.',
-    data: dbCache.googleIntegration
   });
 });
 

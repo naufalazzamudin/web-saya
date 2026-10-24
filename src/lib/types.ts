@@ -125,26 +125,3 @@ export type RecentItem = {
   item: InventoryItem | PurchaseOrderItem | PrelovedItem;
 };
 
-export interface GoogleAccountInfo {
-  email: string;
-  name: string;
-  photoUrl?: string;
-  connectedAt: string;
-  connectedBy: string;
-}
-
-export interface GoogleIntegrationSettings {
-  spreadsheetUrl: string;
-  spreadsheetId: string;
-  driveFolderUrl: string;
-  driveFolderId: string;
-  connectedAccount: GoogleAccountInfo | null;
-  lastSyncedAt?: string | null;
-  lastSyncStatus?: 'idle' | 'success' | 'failed' | 'in_progress' | null;
-  lastSyncMessage?: string | null;
-  syncedInventoryCount?: number;
-  syncedPOCount?: number;
-  syncedPrelovedCount?: number;
-  autoSyncEnabled?: boolean;
-}
-

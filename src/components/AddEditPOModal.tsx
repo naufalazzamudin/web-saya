@@ -374,7 +374,7 @@ export const AddEditPOModal: React.FC<AddEditPOModalProps> = ({
                   )}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Foto atau dokumen PO akan dioptimalkan dan disinkronkan ke folder Google Drive IT saat terhubung.
+                  Foto atau dokumen PO akan dioptimalkan dan disimpan secara aman di server.
                 </p>
               </div>
             </div>
